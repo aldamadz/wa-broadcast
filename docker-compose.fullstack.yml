@@ -1,0 +1,24 @@
+services:
+  wa-template-api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: wa-template-api
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env.docker
+    ports:
+      - "4010:4000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  wa-template-web:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: wa-template-web
+    restart: unless-stopped
+    ports:
+      - "3010:80"
+    depends_on:
+      - wa-template-api
