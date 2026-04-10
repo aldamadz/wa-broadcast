@@ -77,7 +77,7 @@ function hydrateTemplate(template: string, values: Record<string, string>): stri
   return template.replace(/\{([^{}]+)\}/g, (_, key: string) => {
     const normalized = key.trim();
     const value = values[normalized] ?? "";
-    if (normalized.toLowerCase() === "nominal") return formatRupiah(value);
+    if (normalized.toLowerCase().includes("nominal")) return formatRupiah(value);
     return value;
   });
 }
@@ -326,19 +326,25 @@ export default function App() {
                 </div>
 
                 {variableKeys.length > 0 && (
-                  <div className="rounded-lg border border-zinc-700 bg-zinc-900 p-3">
-                    <p className="mb-2 text-sm font-medium text-zinc-200">Variabel</p>
-                    <div className="space-y-2">
+                  <div className="space-y-3 rounded-lg border border-zinc-700 bg-zinc-900/60 p-4">
+                    <div className="flex items-center justify-between">
+                      <label className="text-sm font-medium text-zinc-200">Variable Input</label>
+                      <div className="inline-flex items-center rounded-full border border-zinc-700 bg-zinc-800 px-2.5 py-0.5 text-xs font-semibold text-zinc-300">
+                        {variableKeys.length} variabel
+                      </div>
+                    </div>
+                    <div className="space-y-3">
                       {variableKeys.map((key) => (
-                        <Input
-                          key={key}
-                          value={variables[key] ?? ""}
-                          onChange={(event) =>
-                            setVariables((prev) => ({ ...prev, [key]: event.target.value }))
-                          }
-                          placeholder={`{${key}}`}
-                          className="bg-zinc-950"
-                        />
+                        <div key={key} className="space-y-1">
+                          <label className="text-sm font-medium text-zinc-200">{`{${key}}`}</label>
+                          <Input
+                            value={variables[key] ?? ""}
+                            onChange={(event) =>
+                              setVariables((prev) => ({ ...prev, [key]: event.target.value }))
+                            }
+                            placeholder={`Masukkan nilai ${key}`}
+                          />
+                        </div>
                       ))}
                     </div>
                   </div>
@@ -387,26 +393,36 @@ export default function App() {
               </div>
               <Button onClick={openCreateTemplateModal}>Tambah Template</Button>
             </div>
-            <CardContent className="space-y-2">
-              {templates.map((item) => (
-                <div key={item.id} className="rounded-md border border-zinc-700 bg-zinc-950 p-3">
-                  <p className="font-semibold">{item.title}</p>
-                  <p className="mt-1 whitespace-pre-wrap text-sm text-zinc-300">{item.content}</p>
-                  <div className="mt-2 flex gap-2">
-                    <Button size="sm" variant="secondary" onClick={() => editTemplate(item)}>
-                      Edit
-                    </Button>
-                    <Button size="sm" variant="destructive" onClick={() => void deleteTemplate(item.id)}>
-                      Hapus
-                    </Button>
+            <CardContent>
+              <div className="grid gap-3">
+                {templates.map((item) => (
+                  <div key={item.id} className="rounded-lg border border-zinc-700 bg-zinc-900/60 p-4">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="space-y-2">
+                        <p className="font-semibold">{item.title}</p>
+                        <p className="whitespace-pre-wrap text-sm text-zinc-300">{item.content}</p>
+                        <div className="flex flex-wrap gap-2" />
+                      </div>
+                      <div className="flex gap-2">
+                        <Button size="sm" variant="secondary" onClick={() => editTemplate(item)}>
+                          Edit
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="destructive"
+                          className="bg-red-500 hover:bg-red-400"
+                          onClick={() => void deleteTemplate(item.id)}
+                        >
+                          Hapus
+                        </Button>
+                      </div>
+                    </div>
                   </div>
-                </div>
-              ))}
-              {templates.length === 0 && (
-                <p className="p-3 text-sm text-zinc-400">
-                  Belum ada template.
-                </p>
-              )}
+                ))}
+                {templates.length === 0 && (
+                  <p className="text-sm text-zinc-400">Belum ada template.</p>
+                )}
+              </div>
             </CardContent>
           </Card>
         </TabsContent>
