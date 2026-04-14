@@ -48,6 +48,16 @@ const API_BASE =
   import.meta.env.VITE_API_URL ??
   `${window.location.protocol}//${window.location.hostname}:4010/api`;
 const SESSION_HISTORY_KEY = "wa_send_history";
+const PHONE_ALIASES = [
+  "phone",
+  "nomor",
+  "nomor_wa",
+  "nomorwa",
+  "whatsapp",
+  "no_hp",
+  "nohp",
+  "hp"
+];
 
 function normalizeColumnKey(key: string): string {
   return key.trim().toLowerCase().replace(/\s+/g, "_");
@@ -114,6 +124,9 @@ export default function App() {
   const [importedRows, setImportedRows] = useState<ImportedRow[]>([]);
   const [activeImportedRow, setActiveImportedRow] = useState(0);
   const [importError, setImportError] = useState("");
+  const [importWarning, setImportWarning] = useState("");
+  const [importHeaders, setImportHeaders] = useState<string[]>([]);
+  const [suggestedTemplateHeaders, setSuggestedTemplateHeaders] = useState<string[]>([]);
   const [sentRowIndexes, setSentRowIndexes] = useState<number[]>([]);
 
   const [titleInput, setTitleInput] = useState("");
@@ -198,18 +211,7 @@ export default function App() {
     const row = rows[index];
     if (!row) return;
 
-    const phoneAliases = [
-      "phone",
-      "nomor",
-      "nomor_wa",
-      "nomorwa",
-      "whatsapp",
-      "no_hp",
-      "nohp",
-      "hp"
-    ];
-
-    const phoneValue = phoneAliases
+    const phoneValue = PHONE_ALIASES
       .map((alias) => row[alias])
       .find((value) => typeof value === "string" && value.trim().length > 0);
 
@@ -230,6 +232,8 @@ export default function App() {
     if (!file) return;
 
     setImportError("");
+    setImportWarning("");
+    setSuggestedTemplateHeaders([]);
 
     try {
       const buffer = await file.arrayBuffer();
@@ -256,20 +260,65 @@ export default function App() {
         throw new Error("Data kosong. Pastikan file Excel punya header dan isi.");
       }
 
+      const normalizedHeaders = Array.from(
+        new Set(Object.keys(parsedRows[0] ?? {}).map((header) => normalizeColumnKey(header)))
+      );
+
       setImportedRows(parsedRows);
       setActiveImportedRow(0);
       setSentRowIndexes([]);
+      setImportHeaders(normalizedHeaders);
       applyImportedRow(parsedRows, 0);
     } catch (error) {
       setImportedRows([]);
       setActiveImportedRow(0);
       setSentRowIndexes([]);
+      setImportHeaders([]);
+      setSuggestedTemplateHeaders([]);
+      setImportWarning("");
       setImportError(
         error instanceof Error ? error.message : "Gagal membaca file Excel."
       );
     } finally {
       event.target.value = "";
     }
+  }
+
+  function downloadTemplateExcel() {
+    if (!selectedTemplate || variableKeys.length === 0) return;
+
+    const headers = ["nomor", ...variableKeys.map((key) => normalizeColumnKey(key))];
+    const worksheet = XLSX.utils.aoa_to_sheet([headers]);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Template");
+
+    const safeTitle = selectedTemplate.title
+      .trim()
+      .replace(/[^\w\-]+/g, "_")
+      .replace(/_+/g, "_");
+    XLSX.writeFile(workbook, `template_${safeTitle || "wa"}.xlsx`);
+  }
+
+  function createTemplateFromImportedHeaders() {
+    const variablesFromImport = suggestedTemplateHeaders.filter(
+      (header) => !PHONE_ALIASES.includes(header)
+    );
+    if (variablesFromImport.length === 0) return;
+
+    const hasNama = variablesFromImport.includes("nama");
+    const detailVars = variablesFromImport.filter((header) => header !== "nama");
+    const lines: string[] = [hasNama ? "Halo {nama}," : "Halo,", ""];
+
+    for (const header of detailVars) {
+      lines.push(`${header.replace(/_/g, " ")}: {${header}}`);
+    }
+    lines.push("", "Terima kasih.");
+
+    setEditingId(null);
+    setTitleInput(`Template Import ${new Date().toLocaleDateString("id-ID")}`);
+    setContentInput(lines.join("\n"));
+    setTab("templates");
+    setIsTemplateModalOpen(true);
   }
 
   async function saveTemplate() {
@@ -349,6 +398,39 @@ export default function App() {
     applyImportedRow(importedRows, activeImportedRow);
   }, [variableKeys]);
 
+  useEffect(() => {
+    if (importHeaders.length === 0) {
+      setImportWarning("");
+      setSuggestedTemplateHeaders([]);
+      return;
+    }
+
+    const nonPhoneHeaders = importHeaders.filter((header) => !PHONE_ALIASES.includes(header));
+    const expectedHeaders = variableKeys.map((key) => normalizeColumnKey(key));
+
+    if (expectedHeaders.length === 0) {
+      setImportWarning("Header Excel terdeteksi. Kamu bisa buat template pesan otomatis dari header ini.");
+      setSuggestedTemplateHeaders(nonPhoneHeaders);
+      return;
+    }
+
+    const missingInExcel = expectedHeaders.filter((header) => !nonPhoneHeaders.includes(header));
+    const extraInExcel = nonPhoneHeaders.filter((header) => !expectedHeaders.includes(header));
+
+    if (missingInExcel.length === 0 && extraInExcel.length === 0) {
+      setImportWarning("");
+      setSuggestedTemplateHeaders([]);
+      return;
+    }
+
+    setImportWarning(
+      `Header belum sepenuhnya cocok dengan template. Kurang: ${
+        missingInExcel.length > 0 ? missingInExcel.join(", ") : "-"
+      }. Lebih: ${extraInExcel.length > 0 ? extraInExcel.join(", ") : "-"}.`
+    );
+    setSuggestedTemplateHeaders(extraInExcel.length > 0 ? nonPhoneHeaders : []);
+  }, [importHeaders, variableKeys]);
+
   return (
     <main className="mx-auto min-h-screen w-full max-w-6xl px-4 py-8 md:px-8">
       <div className="mb-8 space-y-2">
@@ -405,6 +487,15 @@ export default function App() {
 
                 <div className="space-y-2">
                   <label className="text-sm font-medium text-zinc-200">Import Excel</label>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    disabled={!selectedTemplate || variableKeys.length === 0}
+                    onClick={downloadTemplateExcel}
+                  >
+                    Download Template Excel
+                  </Button>
                   <input
                     type="file"
                     accept=".xlsx,.xls,.csv"
@@ -415,6 +506,23 @@ export default function App() {
                     Header kolom disarankan: <code>nomor</code>, <code>nama</code>, <code>nominal</code>, dst.
                   </p>
                   {importError && <p className="text-xs text-red-400">{importError}</p>}
+                  {importWarning && <p className="text-xs text-amber-300">{importWarning}</p>}
+                  {suggestedTemplateHeaders.length > 0 && (
+                    <div className="rounded-md border border-amber-400/30 bg-amber-500/10 p-2">
+                      <p className="text-xs text-amber-200">
+                        Excel terlihat pakai struktur custom. Sistem bisa buatkan template pesan otomatis.
+                      </p>
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        className="mt-2"
+                        onClick={createTemplateFromImportedHeaders}
+                      >
+                        Buat Template Pesan dari Header Excel
+                      </Button>
+                    </div>
+                  )}
                   {importedRows.length > 0 && (
                     <div className="flex items-center justify-between rounded-md border border-zinc-700 bg-zinc-900/60 px-3 py-2">
                       <div className="space-y-0.5">
