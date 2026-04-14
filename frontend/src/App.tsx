@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import * as XLSX from "xlsx";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -41,10 +42,16 @@ type SessionHistory = {
   createdAt: string;
 };
 
+type ImportedRow = Record<string, string>;
+
 const API_BASE =
   import.meta.env.VITE_API_URL ??
   `${window.location.protocol}//${window.location.hostname}:4010/api`;
 const SESSION_HISTORY_KEY = "wa_send_history";
+
+function normalizeColumnKey(key: string): string {
+  return key.trim().toLowerCase().replace(/\s+/g, "_");
+}
 
 function parseVariables(text: string): string[] {
   const matches = text.match(/\{([^{}]+)\}/g) ?? [];
@@ -104,6 +111,10 @@ export default function App() {
   const [routeMode, setRouteMode] = useState<RouteMode>("web");
   const [variables, setVariables] = useState<Record<string, string>>({});
   const [sendHistory, setSendHistory] = useState<SessionHistory[]>([]);
+  const [importedRows, setImportedRows] = useState<ImportedRow[]>([]);
+  const [activeImportedRow, setActiveImportedRow] = useState(0);
+  const [importError, setImportError] = useState("");
+  const [sentRowIndexes, setSentRowIndexes] = useState<number[]>([]);
 
   const [titleInput, setTitleInput] = useState("");
   const [contentInput, setContentInput] = useState("");
@@ -183,6 +194,84 @@ export default function App() {
     sessionStorage.setItem(SESSION_HISTORY_KEY, JSON.stringify(next));
   }
 
+  function applyImportedRow(rows: ImportedRow[], index: number) {
+    const row = rows[index];
+    if (!row) return;
+
+    const phoneAliases = [
+      "phone",
+      "nomor",
+      "nomor_wa",
+      "nomorwa",
+      "whatsapp",
+      "no_hp",
+      "nohp",
+      "hp"
+    ];
+
+    const phoneValue = phoneAliases
+      .map((alias) => row[alias])
+      .find((value) => typeof value === "string" && value.trim().length > 0);
+
+    if (phoneValue) setPhone(phoneValue);
+
+    setVariables((prev) => {
+      const next: Record<string, string> = { ...prev };
+      for (const variableKey of variableKeys) {
+        const normalized = normalizeColumnKey(variableKey);
+        next[variableKey] = row[normalized] ?? "";
+      }
+      return next;
+    });
+  }
+
+  async function handleImportFile(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setImportError("");
+
+    try {
+      const buffer = await file.arrayBuffer();
+      const workbook = XLSX.read(buffer, { type: "array" });
+      const firstSheetName = workbook.SheetNames[0];
+      if (!firstSheetName) throw new Error("Sheet tidak ditemukan.");
+
+      const sheet = workbook.Sheets[firstSheetName];
+      const rawRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, {
+        defval: ""
+      });
+
+      const parsedRows: ImportedRow[] = rawRows
+        .map((rawRow) => {
+          const normalizedRow: ImportedRow = {};
+          for (const [key, value] of Object.entries(rawRow)) {
+            normalizedRow[normalizeColumnKey(key)] = String(value ?? "").trim();
+          }
+          return normalizedRow;
+        })
+        .filter((row) => Object.values(row).some((value) => value.length > 0));
+
+      if (parsedRows.length === 0) {
+        throw new Error("Data kosong. Pastikan file Excel punya header dan isi.");
+      }
+
+      setImportedRows(parsedRows);
+      setActiveImportedRow(0);
+      setSentRowIndexes([]);
+      applyImportedRow(parsedRows, 0);
+    } catch (error) {
+      setImportedRows([]);
+      setActiveImportedRow(0);
+      setSentRowIndexes([]);
+      setImportError(
+        error instanceof Error ? error.message : "Gagal membaca file Excel."
+      );
+    } finally {
+      event.target.value = "";
+    }
+  }
+
   async function saveTemplate() {
     if (!titleInput.trim() || !contentInput.trim()) return;
 
@@ -241,7 +330,24 @@ export default function App() {
 
     saveSessionHistory([historyItem, ...sendHistory].slice(0, 100));
     window.open(generatedLink, "_blank", "noopener,noreferrer");
+
+    if (importedRows.length > 0) {
+      setSentRowIndexes((prev) =>
+        prev.includes(activeImportedRow) ? prev : [...prev, activeImportedRow]
+      );
+    }
+
+    if (importedRows.length > 0 && activeImportedRow < importedRows.length - 1) {
+      const nextIndex = activeImportedRow + 1;
+      setActiveImportedRow(nextIndex);
+      applyImportedRow(importedRows, nextIndex);
+    }
   }
+
+  useEffect(() => {
+    if (importedRows.length === 0) return;
+    applyImportedRow(importedRows, activeImportedRow);
+  }, [variableKeys]);
 
   return (
     <main className="mx-auto min-h-screen w-full max-w-6xl px-4 py-8 md:px-8">
@@ -295,6 +401,61 @@ export default function App() {
                       ))}
                     </SelectContent>
                   </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-zinc-200">Import Excel</label>
+                  <input
+                    type="file"
+                    accept=".xlsx,.xls,.csv"
+                    onChange={handleImportFile}
+                    className="block w-full text-sm text-zinc-300 file:mr-3 file:rounded-md file:border file:border-zinc-700 file:bg-zinc-800 file:px-3 file:py-2 file:text-sm file:font-medium file:text-zinc-100 hover:file:bg-zinc-700"
+                  />
+                  <p className="text-xs text-zinc-400">
+                    Header kolom disarankan: <code>nomor</code>, <code>nama</code>, <code>nominal</code>, dst.
+                  </p>
+                  {importError && <p className="text-xs text-red-400">{importError}</p>}
+                  {importedRows.length > 0 && (
+                    <div className="flex items-center justify-between rounded-md border border-zinc-700 bg-zinc-900/60 px-3 py-2">
+                      <div className="space-y-0.5">
+                        <p className="text-xs text-zinc-300">
+                          Baris {activeImportedRow + 1} dari {importedRows.length}
+                        </p>
+                        <p className="text-[11px] text-zinc-400">
+                          Progres: {sentRowIndexes.length} dari {importedRows.length}
+                        </p>
+                      </div>
+                      <div className="flex gap-2">
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          disabled={activeImportedRow === 0}
+                          onClick={() => {
+                            const nextIndex = Math.max(0, activeImportedRow - 1);
+                            setActiveImportedRow(nextIndex);
+                            applyImportedRow(importedRows, nextIndex);
+                          }}
+                        >
+                          Prev
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          disabled={activeImportedRow >= importedRows.length - 1}
+                          onClick={() => {
+                            const nextIndex = Math.min(
+                              importedRows.length - 1,
+                              activeImportedRow + 1
+                            );
+                            setActiveImportedRow(nextIndex);
+                            applyImportedRow(importedRows, nextIndex);
+                          }}
+                        >
+                          Next
+                        </Button>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 <div className="space-y-2">
