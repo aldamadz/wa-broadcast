@@ -90,6 +90,15 @@ function normalizePhoneNumber(phone: string): string {
   return digits;
 }
 
+function normalizeImportedPhone(phone: string): string {
+  const digits = phone.replace(/[^\d]/g, "");
+  if (!digits) return "";
+  if (digits.startsWith("0")) return digits;
+  if (digits.startsWith("62")) return digits;
+  if (digits.startsWith("8")) return `0${digits}`;
+  return digits;
+}
+
 function hydrateTemplate(template: string, values: Record<string, string>): string {
   return template.replace(/\{([^{}]+)\}/g, (_, key: string) => {
     const normalized = key.trim();
@@ -215,7 +224,7 @@ export default function App() {
       .map((alias) => row[alias])
       .find((value) => typeof value === "string" && value.trim().length > 0);
 
-    if (phoneValue) setPhone(phoneValue);
+    if (phoneValue) setPhone(normalizeImportedPhone(phoneValue));
 
     setVariables((prev) => {
       const next: Record<string, string> = { ...prev };
@@ -243,7 +252,8 @@ export default function App() {
 
       const sheet = workbook.Sheets[firstSheetName];
       const rawRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, {
-        defval: ""
+        defval: "",
+        raw: false
       });
 
       const parsedRows: ImportedRow[] = rawRows
